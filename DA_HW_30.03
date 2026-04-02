@@ -1,0 +1,134 @@
+set search_path to lessons_database;
+select * from tmp_orders order by customer_id;
+
+--------------------------------------------------------------------------------------------------------------------------------------------
+
+-- задача 1. выручка только по доставленным заказам
+
+select 
+	sum(t1.order_total) as total,
+	sum(t1.total_shipped) as total_shipped
+from (
+	select 
+		order_total,
+		case
+			when status = 'Shipped'
+			then order_total
+			else null
+		end as total_shipped
+	from tmp_orders
+) as t1;
+
+-- задача 2. доля отмененных заказов
+
+select 
+	count(t1.order_id) as ordercnt,
+	count(t1.canceledcnt) as canceledcnt,
+	round(100.0 * count(t1.canceledcnt) / count(t1.order_id), 2) as percent
+from (
+	select
+		order_id,
+		case
+			when status = 'Canceled'
+			then 1
+			else null
+		end as canceledcnt
+	from tmp_orders
+) as t1;
+
+-- задача 3. накопительная выручка по времени
+
+select
+	order_date, 
+	order_total, 
+	sum(order_total) over (order by order_date) as running_total
+from tmp_orders;
+
+-- задача 4. первый заказ клиента
+
+select 
+	customer_id,
+	order_date as first_order
+from (
+	select 
+		customer_id,
+		order_date,
+		row_number() over (partition by customer_id order by order_date) as first_order
+	from tmp_orders	
+) as t1
+where first_order = 1;
+
+-- задача 5. интервалы между заказами
+
+select 
+	customer_id,
+	order_id,
+	order_date,
+	lag(order_date) over (partition by customer_id order by order_date) as prev_order_date,
+	(order_date - lag(order_date) over (partition by customer_id order by order_date)) as days_diff
+from tmp_orders;
+	
+-- задача 6. повторные клиенты
+
+select distinct
+    customer_id,
+    case 
+	    when count(order_id) over (partition by customer_id) > 1 
+	    then 1 
+	    else 0 
+	    end as is_repeat_customer
+from tmp_orders;
+
+-- задача 7. конверсия клиента в доставку
+
+select 
+    customer_id,
+    total,
+    shipped,
+    shipped / total as conversion
+from (
+    select 
+        customer_id,
+        count(order_id) over (partition by customer_id) as total,
+        count(case when status = 'Shipped' then 1 end) over (partition by customer_id) as shipped
+    from tmp_orders
+) as t1
+group by customer_id, total, shipped
+order by customer_id;
+
+-- задача 8. заказы "локальные максимумы"
+
+select 
+	customer_id,
+	order_id,
+	order_total,
+	order_date
+from (
+	select 
+		*,
+		lag(order_total) over (partition by customer_id order by order_date) as lagtot,
+		lead(order_total) over (partition by customer_id order by order_date) as leadtot
+	from tmp_orders
+) as t1
+where order_total > lagtot 
+and order_total > leadtot;
+
+-- задачв 9. клиенты с растущими заказами
+
+select 
+	customer_id
+from (
+	select 
+			customer_id,
+			order_total,
+			case
+				when lead(order_total) over (partition by customer_id order by order_date) is not null
+				and lead(order_total) over (partition by customer_id order by order_date) <= order_total 
+				then 1
+				else 0
+			end as lead
+	from tmp_orders
+) as t1
+group by customer_id
+having sum(lead) = 0;
+
